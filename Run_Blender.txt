@@ -1,0 +1,2 @@
+@echo off
+"C:\Blender\blender-4.3.2\blender.exe" --python "C:\Users\intern1\Desktop\Project\Pilot_Project\Codes\Blender.py"
