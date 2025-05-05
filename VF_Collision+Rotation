@@ -1,0 +1,176 @@
+import math
+import bpy
+from bpy.types import Operator, Panel
+from bpy_extras.io_utils import ImportHelper
+from math import sqrt
+
+# Clear existing objects
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.object.delete()
+
+class SimpleOperator(bpy.types.Operator, ImportHelper): 
+    bl_idname = "object.simple_operator"
+    bl_label = "Simple Operator"
+
+    toolpath: bpy.props.StringProperty(name="Toolpath")
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH")
+
+    def check_collision(self,obj1, obj2):
+            # Get the heights and radii of both cylinders
+            height1 = obj1.dimensions.z
+            height2 = obj2.dimensions.z
+            radius1 = obj1.dimensions.x / 2
+            radius2 = obj2.dimensions.x / 2
+            
+            # Get the positions of the centers of the base circles
+            center1 = obj1.matrix_world.translation
+            center2 = obj2.matrix_world.translation
+            
+            # Check for overlap in the height (z-axis)
+            if abs(center1.z - center2.z) > (height1 + height2) / 2:
+                return False
+            
+            # Check for overlap in the base circles
+            distance = sqrt((center1.x - center2.x)**2 + (center1.y - center2.y)**2)
+            if distance > (radius1 + radius2):
+                return False
+            
+            return True
+    def execute(self, context):
+        # Import the STL file
+        filepath = self.filepath
+        bpy.ops.wm.stl_import(filepath=filepath)
+        workpiece = bpy.context.selected_objects[0]
+        
+        workpiece.name = "Workpiece"
+        obj = bpy.data.objects.get("Workpiece")
+        obj.location = (0.0, 0.0, 0.0)
+        bpy.context.view_layer.objects.active = workpiece        
+        # Set the origin of the imported workpiece to its geometry center
+        
+        bpy.ops.object.origin_set(type='GEOMETRY_ORIGIN', center='MEDIAN')
+        bpy.ops.object.origin_set(type='ORIGIN_CENTER_OF_VOLUME', center='MEDIAN')
+
+        # Apply auto smooth shading to the workpiece
+        bpy.ops.object.shade_auto_smooth()
+        
+        # Example toolpath data (replace with actual input parsing)
+        toolpath = eval(self.toolpath)
+        
+        # Create a grinding wheel (Cylinder)
+        bpy.ops.mesh.primitive_cylinder_add(radius=30, depth=10, location=(0, 0, 0))
+        grinder = bpy.context.object
+        grinder.name = "Grinding Wheel"
+        
+        # Set material for Grinding Wheel
+        g_mat = bpy.data.materials.new(name="GrindingMaterial")
+        g_mat.diffuse_color = (0.2, 0.6, 0.2, 1)  
+        grinder.data.materials.append(g_mat)
+        
+        # Apply auto smooth shading to the grinding wheel
+        bpy.context.view_layer.objects.active = grinder
+        bpy.ops.object.shade_auto_smooth()
+        
+        # Add a driver to rotate the cylinder continuously around the Z-axis
+        workpiece.driver_add("rotation_euler", 2).driver.expression = "frame * 0.1"
+
+        # Set material for grinding wheel
+        mat = bpy.data.materials.new(name="WorkpieceMaterial")
+        mat.diffuse_color = (0.2, 0.2, 0.2, 1)  # Dark grey
+        workpiece.data.materials.append(mat)
+
+        # Animate the grinding process
+        frame_start = 1
+        for index, (coords, feedrate) in enumerate(toolpath[:-1]):
+            x, y, z = coords  # Unpack coordinates
+            grinder.location = (x + grinder.dimensions.x / 2 , y, z)
+            grinder.keyframe_insert(data_path="location", frame=frame_start)
+            
+            # Get the next coordinates
+            next_coords = toolpath[index + 1][0]
+            next_x, next_y, next_z = next_coords
+            
+            # Calculate the distance to the next coordinates
+            distance = math.sqrt((next_x - x)**2 + (next_y - y)**2 + (next_z - z)**2)
+            
+            # Convert feedrate to mm/sec
+            actual_feed = toolpath[index+1][1]
+            feed = actual_feed / 60
+            
+            # Calculate frames required for the move
+            frame_start += int(24 * distance / feed)  # Ensure frame_start is an integer
+
+        # Insert the final keyframe to ensure the animation ends
+        grinder.keyframe_insert(data_path="location", frame=frame_start)
+
+        # Set timeline to match animation
+        bpy.context.scene.frame_end = frame_start
+        bpy.context.scene.frame_start = 1
+        
+        i = 0
+        for frame in range (1,frame_start+1):
+            bpy.context.scene.frame_set(frame)
+            if self.check_collision(grinder,workpiece) == True:
+                    i = i+1
+                    if i == 1:
+                        g_mat.diffuse_color = (0.2, 0.6, 0.2, 1)
+                        grinder.data.materials.append(g_mat)
+                #        bpy.ops.mesh.primitive_cube_add(size=2, location=(0, 0, 0))
+                #        cube = bpy.context.object
+                                # Insert keyframe for the initial color
+                        g_mat.keyframe_insert(data_path="diffuse_color", frame=frame-1)
+
+                                # Assign initial materials
+
+                        mat.diffuse_color = (0.5, 0.5, 0.5, 1)  
+                        workpiece.data.materials.append(mat)
+
+                            # Insert keyframe for the initial color
+                        mat.keyframe_insert(data_path="diffuse_color", frame=frame-1)
+                    else:
+                        g_mat.diffuse_color = (1, 0,0 , 1)  # Red color
+                        grinder.data.materials.append(g_mat)
+                #        bpy.ops.mesh.primitive_cube_add(size=2, location=(0, 0, 0))
+                #        cube = bpy.context.object
+                                # Insert keyframe for the initial color
+                        g_mat.keyframe_insert(data_path="diffuse_color", frame=frame)
+
+                                # Assign initial materials
+
+                        mat.diffuse_color = (1, 0, 0, 1)  # Red color
+                        workpiece.data.materials.append(mat)
+
+                                # Insert keyframe for the initial color
+                        mat.keyframe_insert(data_path="diffuse_color", frame=frame)
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+class SimpleOperatorPanel(Panel):
+    bl_label = "Simple Operator Panel"
+    bl_idname = "OBJECT_PT_simple_operator"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Tool'
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator(SimpleOperator.bl_idname)
+
+def menu_func(self, context):
+    self.layout.operator(SimpleOperator.bl_idname)
+
+def register():
+    bpy.utils.register_class(SimpleOperator)
+    bpy.utils.register_class(SimpleOperatorPanel)
+    bpy.types.VIEW3D_MT_mesh_add.append(menu_func)
+
+def unregister():
+    bpy.utils.unregister_class(SimpleOperator)
+    bpy.utils.unregister_class(SimpleOperatorPanel)
+    bpy.types.VIEW3D_MT_mesh_add.remove(menu_func)
+
+if __name__ == "__main__":
+    register()
+
